@@ -165,8 +165,8 @@ HTML;
 
 	/**
 	 * 生成要请求给支付宝的参数数组
-	 * @param $para_temp 请求前的参数数组
-	 * @return 要请求的参数数组
+	 * @param $para_temp array 请求前的参数数组
+	 * @return array 要请求的参数数组
 	 */
 	public function buildRequestPara($para_temp) {
 		//除去待签名参数数组中的空值和签名参数
@@ -185,7 +185,7 @@ HTML;
 	/**
 	 * 该方法目前只有移动版会用到,所以hardcode移动版网关
 	 * 建立请求，以模拟远程HTTP的POST请求方式构造并获取支付宝的处理结果
-	 * @param $para_temp 请求参数数组
+	 * @param $para_temp array 请求参数数组
 	 * @return 支付宝处理结果
 	 */
 	private function buildRequestHttp($para_temp) {
@@ -250,7 +250,7 @@ HTML;
 	 * return 时间戳字符串
 	 */
 	function query_timestamp() {
-		$url = $this->alipay_gateway_new."service=query_timestamp&partner=".trim(strtolower($this->config['partner']))."&_input_charset=".trim(strtolower($this->config['input_charset']));
+		$url = self::ALIPAY_GATEWAY."service=query_timestamp&partner=".trim(strtolower($this->config['partner']))."&_input_charset=".trim(strtolower($this->config['input_charset']));
 		$encrypt_key = "";
 
 		$doc = new DOMDocument();
