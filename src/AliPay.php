@@ -1,9 +1,14 @@
 <?php
+namespace zhangv\alipay;
+use zhangv\alipay\util\HttpClient;
+use zhangv\alipay\util\Signer;
 
 /**
  * Class AliPay
  */
 class AliPay {
+	const SIGNTYPE_RSA = 'RSA', SIGNTYPE_RSA2 = 'RSA2';
+
 	/**
 	 * 支付宝网关地址
 	 */
@@ -56,11 +61,113 @@ class AliPay {
 HTML;
 
 	public $responseObject = null;
+	/** @var HttpClient */
+	private $httpClient = null;
+	/** @var Signer */
+	private $signer = null;
 
 	public function __construct($config){
 		$this->config = $config;
+		$this->getHttpClient();
+		$this->getSigner();
 	}
 
+	public function getHttpClient(){
+		if(!$this->httpClient) $this->httpClient = new HttpClient();
+		return $this->httpClient;
+	}
+
+	public function getSigner(){
+		if(empty($this->config['public_key']) || empty($this->config['private_key'])) throw new \Exception('Public key and private key are required');
+		if(!$this->signer) $this->signer = new Signer($this->config['public_key'],$this->config['private_key'],$this->config['alipay_public_key']);
+		return $this->signer;
+	}
+
+	/**
+	 * 统一收单交易创建接口
+	 * @param $outTradeNo
+	 * @param $subject
+	 * @param $amt
+	 * @param array $ext
+	 * @return mixed
+	 * @throws \Exception
+	 */
+	public function create($outTradeNo,$subject,$amt,$ext = []){
+		$params = array_merge([
+			'out_trade_no' => $outTradeNo,
+			'total_amount' => $amt,
+			'subject' => $subject,
+		],$ext);
+		return $this->post('alipay.trade.create',$params);
+	}
+
+	/**
+	 * 统一收单线下交易预创建
+	 * @param $outTradeNo
+	 * @param $subject
+	 * @param $amt
+	 * @param array $ext
+	 * @return mixed
+	 * @throws \Exception
+	 */
+	public function preCreate($outTradeNo,$subject,$amt,$ext = []){
+		$params = array_merge([
+			'out_trade_no' => $outTradeNo,
+			'total_amount' => $amt,
+			'subject' => $subject,
+		],$ext);
+		return $this->post('alipay.trade.precreate',$params);
+	}
+
+	/**
+	 * 统一收单交易支付接口
+	 * @param $outTradeNo
+	 * @param $subject
+	 * @param $amt
+	 * @param array $ext
+	 * @return mixed
+	 * @throws \Exception
+	 */
+	public function pay($outTradeNo,$scene,$authCode,$subject,$amt,$ext = []){
+		$params = array_merge([
+			'out_trade_no' => $outTradeNo,
+			'total_amount' => $amt,
+			'subject' => $subject,
+		],$ext);
+		return $this->post('alipay.trade.create',$params);
+	}
+
+	/**
+	 * 统一收单下单并支付页面
+	 * @link https://docs.open.alipay.com/api_1/alipay.trade.page.pay/
+	 * @param $outTradeNo
+	 * @param $body
+	 * @param $subject
+	 * @param $amt
+	 * @param array $ext
+	 * @return \stdClass
+	 * @throws
+	 */
+	public function pagePay($outTradeNo,$body,$subject,$amt,$ext = []){
+		$params = array_merge([
+			'out_trade_no' => $outTradeNo,
+			'timeout_express' => '90m',
+			'total_amount' => $amt,
+			'body' => $body,
+			'subject' => $subject,
+			'product_code' => 'FAST_INSTANT_TRADE_PAY',
+		],$ext);
+		return $this->post("alipay.trade.page.pay",$params);
+	}
+
+	/**
+	 * @param $outTradeNo
+	 * @param $body
+	 * @param $subject
+	 * @param $amt
+	 * @param array $ext
+	 * @return 提交表单HTML文本
+	 */
 	public function wapPay($outTradeNo,$body,$subject,$amt,$ext = []){
 		$params = array_merge([
 			'out_trade_no' => $outTradeNo,
@@ -71,6 +178,28 @@ HTML;
 			'product_code' => 'QUICK_WAP_WAY',
 		],$ext);
 		return $this->buildForm("alipay.trade.wap.pay",$params);
+	}
+
+	/**
+	 * app支付接口
+	 * @link https://docs.open.alipay.com/api_1/alipay.trade.app.pay
+	 * @param $outTradeNo
+	 * @param $body
+	 * @param $subject
+	 * @param $amt
+	 * @param array $ext
+	 * @return 提交表单HTML文本
+	 */
+	public function appPay($outTradeNo,$body,$subject,$amt,$ext = []){
+		$params = array_merge([
+			'out_trade_no' => $outTradeNo,
+			'timeout_express' => '90m',
+			'total_amount' => $amt,
+			'body' => $body,
+			'subject' => $subject,
+			'product_code' => 'QUICK_MSECURITY_PAY',
+		],$ext);
+		return $this->post("alipay.trade.app.pay",$params);
 	}
 
 	/**
@@ -86,6 +215,8 @@ HTML;
 		$sysParams["method"] = $apiName;
 		$sysParams["timestamp"] = date("Y-m-d H:i:s");
 		$sysParams["charset"] = $this->config['input_charset'];
+		$sysParams["notify_url"] = $this->config['notify_url'];
+		$sysParams["return_url"] = $this->config['return_url'];
 
 		$params = ['biz_content'=>json_encode($params)];
 
@@ -120,7 +251,7 @@ HTML;
 	 * @param string $body
 	 * @param array $ext
 	 * @return mixed
-	 * @throws Exception
+	 * @throws \Exception
 	 */
 	public function posPay($outTradeNo,$scene,$authCode,$amt,$subject = '',$body = '',$ext = []){
 		$params = array_merge([
@@ -136,19 +267,37 @@ HTML;
 	}
 
 	/**
-	 * 支付结果通知处理
+	 * 支付结果后台通知处理
 	 * @param $notify_data array|string 通知数据
 	 * @param $callback callable 回调
 	 * @return null
 	 * @throws Exception
 	 */
-	public function onPaidNotify($notify_data,callable $callback = null){
-		if(true === $this->verifySignature($notify_data)){
+	public function onPaidNotify($data,callable $callback = null){
+		if(true === $this->verifySignature($data)){
 			if($callback && is_callable($callback)){
-				return call_user_func_array( $callback , [$notify_data] );
+				return call_user_func_array( $callback , [$data] );
 			}
 		}else{
-			throw new Exception('Invalid paid notify data');
+			throw new \Exception('Invalid paid notify data');
+		}
+	}
+
+	/**
+	 * 支付结果前台返回处理
+	 * @see https://docs.open.alipay.com/203/107090/#s2
+	 * @param $notify_data array|string 返回参数
+	 * @param $callback callable 回调
+	 * @return null
+	 * @throws Exception
+	 */
+	public function onPaidReturn($data,callable $callback = null){
+		if(true === $this->verifySignature($data)){
+			if($callback && is_callable($callback)){
+				return call_user_func_array( $callback , [$data] );
+			}
+		}else{
+			throw new \Exception('Invalid paid return data');
 		}
 	}
 
@@ -178,10 +327,11 @@ HTML;
 	 * @param string $terminalid
 	 * @return result/json
 	 */
-	public function refundByOutTradeNo($outTradeNo,$amt,$ext = []){
+	public function refundByOutTradeNo($outTradeNo,$amt,$requestNo,$ext = []){
 		$params = array_merge([
 			'out_trade_no' => $outTradeNo,
-			'refund_amount' => $amt
+			'refund_amount' => $amt,
+			'out_request_no' => $requestNo
 		],$ext);
 		return $this->post('alipay.trade.refund',$params);
 	}
@@ -198,10 +348,11 @@ HTML;
 	 * @param string $terminalid
 	 * @return result/json
 	 */
-	public function refundByTradeNo($tradeNo,$amt,$ext = []){
+	public function refundByTradeNo($tradeNo,$amt,$requestNo,$ext = []){
 		$params = array_merge([
 			'trade_no' => $tradeNo,
-			'refund_amount' => $amt
+			'refund_amount' => $amt,
+			'out_request_no' => $requestNo
 		],$ext);
 		return $this->post('alipay.trade.refund',$params);
 	}
@@ -226,59 +377,113 @@ HTML;
 		return $this->post('alipay.trade.query',$params);
 	}
 
-	private function post($apiName, $params) {
+	/**
+	 * 退款交易查询
+	 * @link https://docs.open.alipay.com/api_1/alipay.trade.fastpay.refund.query/
+	 */
+	public function queryRefund($outRequestNo,$tradeNo = null,$outTradeNo = null,$orgPid = null){
+		if(!$tradeNo && !$outTradeNo) throw new \Exception('TradeNo or OutTradeNo is required.');
+		$params = ['out_request_no' => $outRequestNo];
+		if($tradeNo) $params['trade_no'] = $tradeNo;
+		if($outTradeNo) $params['out_trade_no'] = $outTradeNo;
+		if($orgPid) $params['org_pid'] = $orgPid;
+		return $this->post('alipay.trade.fastpay.refund.query',$params);
+	}
+
+	/**
+	 * 统一收单交易结算接口
+	 * @link https://docs.open.alipay.com/api_1/alipay.trade.order.settle/
+	 */
+	public function settleOrder($outRequestNo, $tradeNo, $royalties){
+		$params = [
+			'out_request_no' => $outRequestNo,
+			'trade_no'=>$tradeNo,
+			'royalty_parameters' => $royalties
+		];
+		return $this->post('alipay.trade.order.settle',$params);
+	}
+
+	/**
+	 * 统一收单交易关闭
+	 * @link https://docs.open.alipay.com/api_1/alipay.trade.close/
+	 */
+	public function close($tradeNo = null,$outTradeNo = null,$operatorId = null){
+		if(!$tradeNo && !$outTradeNo) throw new \Exception('TradeNo or OutTradeNo is required.');
+		$params = [];
+		if($tradeNo) $params['trade_no'] = $tradeNo;
+		if($outTradeNo) $params['out_trade_no'] = $outTradeNo;
+		if($operatorId) $params['operator_id'] = $operatorId;
+		return $this->post('alipay.trade.close',$params);
+	}
+	/**
+	 * 统一收单交易撤销
+	 * @link https://docs.open.alipay.com/api_1/alipay.trade.cancel/
+	 */
+	public function cancel($tradeNo = null,$outTradeNo = null){
+		if(!$tradeNo && !$outTradeNo) throw new \Exception('TradeNo or OutTradeNo is required.');
+		$params = [];
+		if($tradeNo) $params['trade_no'] = $tradeNo;
+		if($outTradeNo) $params['out_trade_no'] = $outTradeNo;
+		return $this->post('alipay.trade.cancel',$params);
+	}
+
+
+	private function post($method, $params) {
 		$sysParams["app_id"] = $this->config['app_id'];
 		$sysParams["version"] = $this->config['version'];
 		$sysParams["format"] = $this->config['format'];
 		$sysParams["sign_type"] = $this->config['sign_type'];
-		$sysParams["method"] = $apiName;
+		$sysParams["method"] = $method;
 		$sysParams["timestamp"] = date("Y-m-d H:i:s");
 		$sysParams["charset"] = $this->config['input_charset'];
 
-		$params = ['biz_content'=>json_encode($params)];
+		$params = ['biz_content'=>json_encode($params,JSON_UNESCAPED_UNICODE)];
 
 		$sysParams["sign"] = $this->sign(array_merge($params, $sysParams), $this->config['sign_type']);
 
 		$url = self::GATEWAY_OPENAPI . "?" . http_build_query($sysParams);
 
+		$r = $this->httpClient->post($url,$this->config['input_charset'],$params);
+
+		$jsonObj = json_decode($r);
+		$sign = $jsonObj->sign;
+		$node = str_replace('.','_',$method) . '_response';
+
+		$signData = json_encode($jsonObj->$node,JSON_UNESCAPED_UNICODE);//注意这里一定要escape，否则中文会输出为unicode，导致验证签名错误
+		$checkResult = $this->verify($signData, $sign);
+		if (!$checkResult) {
+			throw new \Exception("check sign Fail! [sign=" . $sign . ", signData=" . $signData . "]");
+		}
+		return $jsonObj->$node;
+	}
+
+	private function get($method, $params) {
+		$sysParams["app_id"] = $this->config['app_id'];
+		$sysParams["version"] = $this->config['version'];
+		$sysParams["format"] = $this->config['format'];
+		$sysParams["sign_type"] = $this->config['sign_type'];
+		$sysParams["method"] = $method;
+		$sysParams["timestamp"] = date("Y-m-d H:i:s");
+		$sysParams["charset"] = $this->config['input_charset'];
+
+		$params = ['biz_content'=>json_encode($params,JSON_UNESCAPED_UNICODE)];
+
+		$sysParams["sign"] = $this->sign(array_merge($params, $sysParams), $this->config['sign_type']);
+		$tmp = array_merge($sysParams,$params);
+		$url = self::GATEWAY_OPENAPI . "?" . http_build_query( $tmp);
 		$ch = curl_init();
 		curl_setopt($ch, CURLOPT_URL, $url);
 		curl_setopt($ch, CURLOPT_FAILONERROR, false);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-		$postBodyString = "";
-		$encodeArray = Array();
-		$postMultipart = false;
 		$inputcharset = $this->config['input_charset'];
-		if (is_array($params) && 0 < count($params)) {
-			foreach ($params as $k => $v) {
-				if ("@" != substr($v, 0, 1)){ //不是文件上传
-					$postBodyString .= "$k=" . urlencode($this->characet($v, $inputcharset)) . "&";
-					$encodeArray[$k] = $this->characet($v, $inputcharset);
-				} else {//文件上传用multipart/form-data，否则用www-form-urlencoded
-					$postMultipart = true;
-					$encodeArray[$k] = new \CURLFile(substr($v, 1));
-				}
+		$r = $this->httpClient->get($url,$inputcharset,$tmp);
 
-			}
-			unset ($k, $v);
-			curl_setopt($ch, CURLOPT_POST, true);
-			if ($postMultipart) {
-				curl_setopt($ch, CURLOPT_POSTFIELDS, $encodeArray);
-			} else {
-				curl_setopt($ch, CURLOPT_POSTFIELDS, substr($postBodyString, 0, -1));
-			}
-		}
-
-		if ($postMultipart) {
-			$headers = array('content-type: multipart/form-data;charset=' . $inputcharset . ';boundary=' . $this->getMillisecond());
-		} else {
-			$headers = array('content-type: application/x-www-form-urlencoded;charset=' . $inputcharset);
-		}
+		$headers = array('content-type: application/x-www-form-urlencoded;charset=' . $inputcharset);
 		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
 		$resp = curl_exec($ch);
 		if (curl_errno($ch)) {
-			throw new Exception(curl_error($ch), 0);
+			throw new \Exception(curl_error($ch), 0);
 		} else {
 			$httpStatusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 			if (200 !== $httpStatusCode) {
@@ -290,18 +495,14 @@ HTML;
 		$r = $resp;
 		$jsonObj = json_decode($r);
 		$sign = $jsonObj->sign;
-		$node = str_replace('.','_',$apiName) . '_response';
-		$signData = json_encode($jsonObj->$node);
+		$node = str_replace('.','_',$method) . '_response';
+		$signData = json_encode($jsonObj->$node,JSON_UNESCAPED_UNICODE);//注意这里一定要escape，否则中文会输出为unicode，导致验证签名错误
 		$checkResult = $this->verify($signData, $sign);
 		if (!$checkResult) {
-			throw new Exception("check sign Fail! [sign=" . $signData->sign . ", signSourceData=" . $signData->signSourceData . "]");
+			throw new Exception("check sign Fail! [sign=" . $sign . ", signData=" . $signData . "]");
 		}
 
 		return $jsonObj->$node;
-	}
-
-	private function nullOrBlank($v){
-		return empty($v) || trim($v)=='';
 	}
 
 	private function verify($data, $sign) {
@@ -316,176 +517,6 @@ HTML;
 			$result = (bool)openssl_verify($data, base64_decode($sign), $res);
 		}
 		return $result;
-	}
-
-	/**
-	 * 转换字符集编码 //todo remove this ugly
-	 * @param $data
-	 * @param $targetCharset
-	 * @return string
-	 */
-	function characet($data, $targetCharset) {
-		if (!empty($data)) {
-			$fileType = 'UTF-8';
-			if (strcasecmp($fileType, $targetCharset) != 0) {
-				$data = mb_convert_encoding($data, $targetCharset, $fileType);
-			}
-		}
-		return $data;
-	}
-
-	/**
-	 * 退款交易查询
-	 */
-	public function refundQuery(){
-
-	}
-
-	/**
-	 * 查询对账单下载地址
-	 */
-	public function datadownload(){
-
-	}
-
-	/**
-	 * 交易关闭
-	 */
-	public function close(){
-
-	}
-
-	/**
-	 * 批量退款(需要密码)
-	 * @deprecated
-	 * 参考：http://doc.open.alipay.com/doc2/detail?spm=0.0.0.0.Fyw0eq&treeId=66&articleId=103600&docType=1
-	 * 错误代码参考：http://wenku.baidu.com/view/520a0c6748d7c1c708a1456a.html###
-	 * @param $refundDate
-	 * @param $batchNo
-	 * @param $detail
-	 * @return 提交表单HTML文本
-	 */
-	public function batchRefundForm($refundDate,$batchNo,$detail){
-		$detaildata = [];
-		foreach($detail as $each){
-			$tmp = [$each['tradeId'], $each['amount'],$each['reason']];
-			$detaildata[] = implode('^',$tmp);
-		}
-		$detaildata = implode('#',$detaildata);
-
-		$parameter = array(
-			"service" => "refund_fastpay_by_platform_pwd",
-			"partner" => trim($this->config['partner']),
-			"notify_url"	=> $this->config['refund_notify_url'], //服务器异步通知页面路径 //需http://格式的完整路径，不能加?id=123这类自定义参数
-			"seller_email"	=> $this->config['seller_email'],//卖家支付宝帐户//必填
-			"refund_date" => $refundDate,
-			'batch_no' => $batchNo,
-			'batch_num' => count($detail),
-			'detail_data' =>$detaildata,
-			"_input_charset"=> trim(strtolower($this->config['input_charset']))
-		);
-		$form = $this->buildRequestForm($parameter,"get", "确认退款");
-		return $form;
-	}
-
-	/**
-	 * 批量退款(不需要密码)(旧版)
-	 * 如报错:ILLEGAL_PARTNER_EXTERFACE - 需要确认有没有开通该接口
-	 * @deprecated
-	 * @param $refundDate
-	 * @param $batchNo
-	 * @param $detail
-	 * @return 提交表单HTML文本
-	 */
-	public function batchRefund($refundDate,$batchNo,$detail){
-		$detaildata = [];
-		foreach($detail as $each){
-			$tmp = [$each['tradeId'], $each['amount'],$each['reason']];
-			$detaildata[] = implode('^',$tmp);
-		}
-		$detaildata = implode('#',$detaildata);
-		$parameter = array(
-			"service" => "refund_fastpay_by_platform_nopwd",
-			"partner" => trim($this->config['partner']),
-			"sign_type" => trim($this->config['sign_type']),
-			"notify_url"	=> $this->config['refund_notify_url'], //服务器异步通知页面路径 //需http://格式的完整路径，不能加?id=123这类自定义参数
-			"refund_date" => $refundDate,
-			'batch_no' => $batchNo,
-			'batch_num' => count($detail),
-			'detail_data' =>$detaildata,
-			"_input_charset"=> trim(strtolower($this->config['input_charset']))
-		);
-		$parameter['sign'] = $this->buildRequestMysign($parameter);
-		$url = self::ALIPAY_GATEWAY.$this->createQueryString($parameter);
-		$result = $this->httpGet($url);
-		return $result;
-	}
-
-	/**
-	 * 建立请求，以表单HTML形式构造（默认）
-	 * @param $para_temp 请求参数数组
-	 * @param string $method 提交方式 post、get
-	 * @param string $btnLabel 确认按钮显示文字
-	 * @return 提交表单HTML文本
-	 */
-	private function buildRequestForm($para_temp, $method = 'get', $btnLabel = '支付') {
-		$para = $this->buildRequestPara($para_temp);
-		$input = "";
-		foreach($para as $key => $val) {
-			$input .= "\t\t<input type=\"hidden\" name=\"{$key}\" value=\"{$val}\">\n";
-		}
-		return sprintf($this->payForm, self::ALIPAY_GATEWAY,'utf-8', $method, $input,$btnLabel);
-	}
-
-	/**
-	 * 建立请求，以表单HTML形式构造（默认）
-	 * @param $para_temp 请求参数数组
-	 * @param string $method 提交方式 post、get
-	 * @param string $btnLabel 确认按钮显示文字
-	 * @return 提交表单HTML文本
-	 */
-	private function buildRequestFormMobile($para_temp, $method = 'get', $btnLabel = '支付') {
-		$para = $this->buildRequestPara($para_temp);
-		$input = "";
-		foreach($para as $key => $val) {
-			$input .= "\t\t<input type=\"hidden\" name=\"{$key}\" value=\"{$val}\">\n";
-		}
-		return sprintf($this->payForm, self::ALIPAY_MOBILE_GATEWAY,'utf-8', $method, $input,$btnLabel);
-	}
-
-	/**
-	 * 生成签名结果
-	 *
-	 * @param $para_sort 已排序要签名的数组
-	 * @return 签名结果字符串
-	 */
-	private function buildRequestMysign($para_sort) {
-		$mysign = "";
-		switch (strtoupper(trim($this->config['sign_type']))) {
-			case "MD5" :
-				$mysign = $this->sign($para_sort,$this->config['sign_type']);
-				break;
-			default :
-				$mysign = "";
-		}
-		return $mysign;
-	}
-
-	/**
-	 * 把数组所有元素，按照“参数=参数值”的模式用“&”字符拼接成字符串
-	 *
-	 * @param $para 需要拼接的数组
-	 * @return 拼接完成以后的字符串
-	 */
-	private function createLinkstring($para) {
-		$arg  = "";
-		while (list ($key, $val) = each ($para)) {
-			$arg.=$key."=".$val."&";
-		}
-		$arg = substr($arg,0,count($arg)-2);
-		//如果存在转义字符，那么去掉转义
-		if(get_magic_quotes_gpc()){$arg = stripslashes($arg);}
-		return $arg;
 	}
 
 	/**
@@ -512,75 +543,52 @@ HTML;
 		}
 	}
 
-	private function verifySignature($data){
-		return true;
-		$params = $this->filter($data); //过滤待签名数据
-		if($data['sign_type'] == 'RSA2'){
-
-		}elseif($data['sign_type'] == 'RSA'){
-			$signString = $this->getSignString($data);
-			return $this->rsaVerify($params,$signString);
-		}elseif($data['sign_type'] == 'MD5'){
-
-		}
-		return true;
-
-
-		$signType = $this->config['sign_type'];
-		if(!$this->nullOrBlank($this->config['public_key'])){
-			$res = "-----BEGIN PUBLIC KEY-----\n" .
-				wordwrap($this->config['public_key'], 64, "\n", true) .
-				"\n-----END PUBLIC KEY-----";
-		}else {
-			$pubKey = file_get_contents($this->config['public_key_path']);
-			$res = openssl_get_publickey($pubKey);
-		}
-
-		if(!$res) throw new Exception(' RSA public key(or path) not found ');
-		if ("RSA2" == $signType) {
-			$result = (bool)openssl_verify($data, base64_decode($sign), $res, OPENSSL_ALGO_SHA256);
-		} else {
-			$result = (bool)openssl_verify($data, base64_decode($sign), $res);
-		}
-		if(!$this->nullOrBlank($this->config['public_key'])) {
-			openssl_free_key($res);//释放资源
-		}
-		return $result;
+	/**
+	 * @param $data
+	 * @return bool
+	 * @throws Exception
+	 */
+	public function verifySignature($data){
+		return $this->signer-> verify($data);
 	}
 
-	/**
-	 * 验证移动(wap和app)支付完成异步通知参数
-	 * @param array $data 待验证数组,来此POST,包含xml
-	 * @return boolean
-	 */
-	public function verifyMobileNotify($data) {
-		$params = $this->filter($data); //过滤待签名数据
-		$responseTxt = 'true';
-		if( !empty( $params['notify_id'] ) ) {
-			$responseTxt = $this->getResponseByNotifyId($params['notify_id']);
-		}
-		if($this->config['sign_type'] == 'RSA') {
-			$signString = $this->getSignString($data);
-			return $this->rsaVerify($params,$signString);
-		} else {
-			$sign = $this->sign($data,$this->config['sign_type']);
-			if ( preg_match("/true$/i",$responseTxt) && ($sign == $data['sign']) ) {
-				return true;
-			} else {
-				return false;
+	protected function getSignContent($params) {
+		ksort($params);
+
+		$stringToBeSigned = "";
+		$i = 0;
+		foreach ($params as $k => $v) {
+			if (false === $this->checkEmpty($v) && "@" != substr($v, 0, 1)) {
+				// 转换成目标字符集
+				$v = $this->characet($v, $this->config['input_charset']);
+
+				if ($i == 0) {
+					$stringToBeSigned .= "$k" . "=" . "$v";
+				} else {
+					$stringToBeSigned .= "&" . "$k" . "=" . "$v";
+				}
+				$i++;
 			}
 		}
+
+		unset ($k, $v);
+		return $stringToBeSigned;
 	}
 
 	/**
-	 * 验证移动(wap和app)支付完成同步跳转通知参数
-	 * @param array $data 待验证数组,来自GET
-	 * @return boolean
-	 */
-	public function verifyMobileReturn($data) {
-		$params = $this->filter($data); //过滤待签名数据
-		$signstr = $this->getSignString($params);
-		return $this->md5Verify($signstr,$data['sign'],$this->config['key']);
+	 * 校验$value是否非空
+	 *  if not set ,return true;
+	 *    if is null , return true;
+	 **/
+	protected function checkEmpty($value) {
+		if (!isset($value))
+			return true;
+		if ($value === null)
+			return true;
+		if (trim($value) === "")
+			return true;
+
+		return false;
 	}
 
 	/**
@@ -589,75 +597,7 @@ HTML;
 	 * @return string
 	 */
 	private function sign($data,$signType) {
-		$data = $this->filter($data);
-		ksort($data);
-		reset($data);
-		$stringSignTemp = $this->getSignString($data);
-		$sign = '';
-
-		switch ($signType) {
-			case 'RSA':
-				$sign = $this->rsaSign($stringSignTemp);
-				break;
-			case 'RSA2':
-				$sign = $this->rsaSign($stringSignTemp,'RSA2');
-				break;
-			case 'DES':
-				break;
-			default:
-				$sign = $this->md5Sign($stringSignTemp,$this->config['key']);
-		}
-		return $sign;
-	}
-
-	/**
-	 * 获得待签名数据
-	 * @return string
-	 */
-	private function getSignString($data) {
-		$param_tmp = $this->filter($data); //过滤待签名数据
-		//排序
-		ksort($param_tmp);
-		reset($param_tmp);
-		//创建查询字符串形式的待签名数据
-		return $this->createQueryString($param_tmp);
-	}
-
-	/**
-	 * 过滤待签名数据，去掉sign、sign_type及空值
-	 *
-	 * @return array
-	 */
-	private function filter($data) {
-		$para_filter = [];
-		foreach($data as $key => $value){
-			if($key =="sign" || empty($value)) continue;
-			if(strtoupper($this->config['sign_type']) == 'MD5' && $key == 'sign_type') continue; //旧版md5签名时sign_type不参与签名
-			else $para_filter[$key] = $value;
-		}
-		return $para_filter;
-	}
-
-	/**
-	 * 用&拼接字符串,形成URL查询字符串
-	 *
-	 * @param array $data
-	 * @param boolean $urlencode 是否对值做urlencode
-	 * @return string
-	 */
-	private function createQueryString($data,$urlencode = false) {
-		$args = [];
-		foreach( $data as $key => $value ) {
-			if($urlencode) {
-				$key = urlencode($key);
-				$value = urlencode($value);
-			}
-			$args[] = "$key=$value";
-		}
-		$args = implode('&',$args);
-		//如果存在转义字符，那么去掉转义
-		if(get_magic_quotes_gpc()) {$args = stripslashes($args);}
-		return $args;
+		return $this->signer->sign($data,$signType);
 	}
 
 	/**
@@ -678,121 +618,6 @@ HTML;
 		return $responseTxt;
 	}
 
-	/**
-	 * RSA签名
-	 * @param $data string 待签名数据
-	 * @param $signtype string 签名方式 RSA | RSA2
-	 * @return string 签名结果
-	 * @throws Exception
-	 */
-	private function rsaSign($data,$signtype = 'RSA') {
-		if(isset($this->config['private_key']) && trim($this->config['private_key'])!=''){
-			$priKey = $this->config['private_key'];
-			$res = "-----BEGIN RSA PRIVATE KEY-----\n" . wordwrap($priKey, 64, "\n", true) . "\n-----END RSA PRIVATE KEY-----";
-		}elseif(isset($this->config['private_key_path']) && trim($this->config['private_key_path'])!=''
-			&& file_exists($this->config['private_key_path'])
-		){
-			$priKey = file_get_contents($this->config['private_key_path']);
-			$res = (string)openssl_get_privatekey($priKey);
-		}else{
-			throw new Exception('Require RSA key configuration.');
-		}
-		$sign = '';
-		if('RSA2' == $signtype){
-			openssl_sign($data, $sign, $res, OPENSSL_ALGO_SHA256);
-		}else{
-			openssl_sign($data, $sign, $res);
-		}
-//		openssl_free_key($res);
-		$sign = base64_encode($sign);
-
-		return $sign;
-	}
-
-	/**
-	 * RSA验签
-	 * @param $data array 待签名数据
-	 * @param $sign string 要校对的的签名结果
-	 * @return boolean 验证结果
-	 */
-	private function rsaVerify($data, $sign)  {
-		$pubKey = file_get_contents($this->config['public_key_path']);
-		$res = openssl_get_publickey($pubKey);
-		$result = (bool)openssl_verify($data, base64_decode($sign), $res);
-		openssl_free_key($res);
-		return $result;
-	}
-
-	/**
-	 * RSA解密
-	 * @param $content 需要解密的内容，密文
-	 * @return 解密后内容，明文
-	 */
-	private function rsaDecrypt($content) {
-		$priKey = file_get_contents($this->config['private_key_path']);
-		$res = openssl_get_privatekey($priKey);
-		//用base64将内容还原成二进制
-		$content = base64_decode($content);
-		//把需要解密的内容，按128位拆开解密
-		$result  = '';
-		for($i = 0; $i < strlen($content)/128; $i++  ) {
-			$data = substr($content, $i * 128, 128);
-			openssl_private_decrypt($data, $decrypt, $res);
-			$result .= $decrypt;
-		}
-		openssl_free_key($res);
-		return $result;
-	}
-
-	/**
-	 * MD5签名
-	 * @param $prestr string 需要签名的字符串
-	 * @param $key string 私钥
-	 * @return string 签名结果
-	 */
-	public function md5Sign($prestr, $key) {
-		$prestr = $prestr . $key;
-		return md5($prestr);
-	}
-
-	/**
-	 * MD5验证签名
-	 * @param $prestr string 需要签名的字符串
-	 * @param $sign string 签名结果
-	 * @param $key string 私钥
-	 * @return boolean 签名结果
-	 */
-	function md5Verify($prestr, $sign, $key) {
-		$prestr = $prestr . $key;
-		$mysgin = md5($prestr);
-		if($mysgin == $sign) return true;
-		else return false;
-	}
-
-	private function httpPost($url, $data) {
-		$data["sign"] = $this->sign($data,$this->config['sign_type']);
-		$data["sign_type"] = $this->config['sign_type'];
-		if (trim($this->config['input_charset']) != '') {
-			$url = $url."_input_charset=".$this->config['input_charset'];
-		}
-		$curl = curl_init($url);
-		curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, true);//SSL证书认证
-		curl_setopt($curl, CURLOPT_SSL_VERIFYHOST, 2);//严格认证
-		curl_setopt($curl, CURLOPT_CAINFO,$this->config['cacert']);//证书地址
-		curl_setopt($curl, CURLOPT_HEADER, 0 ); // 过滤HTTP头
-		curl_setopt($curl, CURLOPT_RETURNTRANSFER, 1);// 显示输出结果
-		curl_setopt($curl, CURLOPT_POST,true); // post传输数据
-		curl_setopt($curl, CURLOPT_POSTFIELDS,$data);// post传输数据
-		$responseText = curl_exec($curl);
-		curl_close($curl);
-		return $responseText;
-	}
-
-	private function getMillisecond() {
-		list($s1, $s2) = explode(' ', microtime());
-		return (float)sprintf('%.0f', (floatval($s1) + floatval($s2)) * 1000);
-	}
-
 	private function httpGet($url) {
 		$curl = curl_init($url);
 		curl_setopt($curl, CURLOPT_HEADER, 0 ); // 过滤HTTP头
@@ -804,4 +629,6 @@ HTML;
 		curl_close($curl);
 		return $responseText;
 	}
+
+
 }

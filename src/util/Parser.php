@@ -5,6 +5,7 @@
  */
 
 namespace zhangv\alipay\util;
+
 class Parser{
 	private $RESPONSE_SUFFIX = "_response";
 
