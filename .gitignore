@@ -2,4 +2,4 @@
 
 demo/config.php
 vendor
-.idea/
+.idea/*

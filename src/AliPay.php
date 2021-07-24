@@ -1,5 +1,7 @@
 <?php
 namespace zhangv\alipay;
+use Exception;
+use stdClass;
 use zhangv\alipay\util\HttpClient;
 use zhangv\alipay\util\Signer;
 
@@ -17,7 +19,7 @@ class AliPay {
 		PRODUCTCODE_PRE_AUTH = 'PRE_AUTH',//新当面资金授权产品
 		PRODUCTCODE_QUICK_WAP_PAY=  'QUICK_WAP_PAY',//无线快捷支付产品
 		PROCUCTCODE_QUICK_MSECURITY_PAY = 'QUICK_MSECURITY_PAY' //无线快捷支付产品（APP）
-		;
+	;
 	/**
 	 * 支付宝网关地址
 	 */
@@ -87,7 +89,7 @@ HTML;
 	}
 
 	public function getSigner(){
-		if(empty($this->config['public_key']) || empty($this->config['private_key'])) throw new \Exception('Public key and private key are required');
+		if(empty($this->config['public_key']) || empty($this->config['private_key'])) throw new Exception('Public key and private key are required');
 		if(!$this->signer) $this->signer = new Signer($this->config['public_key'],$this->config['private_key'],$this->config['alipay_public_key']);
 		return $this->signer;
 	}
@@ -99,7 +101,7 @@ HTML;
 	 * @param $amt
 	 * @param array $ext
 	 * @return mixed
-	 * @throws \Exception
+	 * @throws Exception
 	 */
 	public function create($outTradeNo,$subject,$amt,$ext = []){
 		$params = array_merge([
@@ -117,7 +119,7 @@ HTML;
 	 * @param $amt
 	 * @param array $ext
 	 * @return mixed
-	 * @throws \Exception
+	 * @throws Exception
 	 */
 	public function preCreate($outTradeNo,$subject,$amt,$ext = []){
 		$params = array_merge([
@@ -135,7 +137,7 @@ HTML;
 	 * @param $amt
 	 * @param $ext
 	 * @return mixed
-	 * @throws \Exception
+	 * @throws Exception
 	 */
 	public function pay($outTradeNo,$authCode, $subject,$amt,
 	                    $scene = AliPay::SCENE_BARCODE,$product_code = AliPay::PRODUCTCODE_FACETOFACE, $ext = []){
@@ -157,18 +159,18 @@ HTML;
 	 * @param string $outTradeNo 商户订单号。
 	 * 由商家自定义，64个字符以内，仅支持字母、数字、下划线且需保证在商户端不重复
 	 * @param $scene string 支付场景。枚举值：
-	 * bar_code：当面付条码支付场景；
-	 * security_code：当面付刷脸支付场景，对应的auth_code为fp开头的刷脸标识串；
-	 * 周期扣款或代扣场景无需传入，协议号通过agreement_params参数传递；
-	 * 支付宝预授权和新当面资金授权场景无需传入，授权订单号通过 auth_no字段传入。
-	 * 默认值为bar_code。
+	 *      bar_code：当面付条码支付场景；
+	 *      security_code：当面付刷脸支付场景，对应的auth_code为fp开头的刷脸标识串；
+	 *      周期扣款或代扣场景无需传入，协议号通过agreement_params参数传递；
+	 *      支付宝预授权和新当面资金授权场景无需传入，授权订单号通过 auth_no字段传入。
+	 *      默认值为bar_code。
 	 * @param string $authCode 支付授权码。
 	 * @param $amt
 	 * @param string $subject
 	 * @param string $body
 	 * @param array $ext
 	 * @return mixed
-	 * @throws \Exception
+	 * @throws Exception
 	 */
 	public function posPay($outTradeNo, $scene, $authCode, $amt, $subject = '', $body = '', $ext = []){
 		$params = array_merge([
@@ -178,7 +180,7 @@ HTML;
 			'total_amount' => $amt,
 			'body' => $body,
 			'subject' => $subject,
-			'product_code' => 'FACE_TO_FACE_PAYMENT',
+			'product_code' => self::PRODUCTCODE_FACETOFACE,
 		],$ext);
 		return $this->post("alipay.trade.pay",$params);
 	}
@@ -191,7 +193,7 @@ HTML;
 	 * @param $subject
 	 * @param $amt
 	 * @param array $ext
-	 * @return \stdClass
+	 * @return stdClass
 	 * @throws
 	 */
 	public function pagePay($outTradeNo,$body,$subject,$amt,$ext = []){
@@ -210,18 +212,18 @@ HTML;
 	 * @param $outTradeNo
 	 * @param $body
 	 * @param $subject
-	 * @param $amt
+	 * @param $totalAmt
 	 * @param array $ext
-	 * @return 提交表单HTML文本
+	 * @return string
 	 */
-	public function wapPay($outTradeNo,$body,$subject,$amt,$ext = []){
+	public function wapPay($outTradeNo,$body,$subject,$totalAmt,$ext = []){
 		$params = array_merge([
 			'out_trade_no' => $outTradeNo,
 			'timeout_express' => '90m',
-			'total_amount' => $amt,
+			'total_amount' => $totalAmt,
 			'body' => $body,
 			'subject' => $subject,
-			'product_code' => 'QUICK_WAP_WAY',
+			'product_code' => self::PRODUCTCODE_QUICK_WAP_PAY,
 		],$ext);
 		return $this->buildForm("alipay.trade.wap.pay",$params);
 	}
@@ -232,7 +234,7 @@ HTML;
 	 * @param $subject
 	 * @param $amt
 	 * @param array $ext
-	 * @return string 提交表单HTML文本
+	 * @return string 字符串
 	 */
 	public function jsPay($outTradeNo,$body,$subject,$amt,$ext = []){
 		$params = array_merge([
@@ -241,7 +243,7 @@ HTML;
 			'total_amount' => $amt,
 			'body' => $body,
 			'subject' => $subject,
-			'product_code' => 'QUICK_WAP_WAY',
+			'product_code' => self::PRODUCTCODE_QUICK_WAP_PAY,
 		],$ext);
 		return $this->buildString("alipay.trade.wap.pay",$params);
 	}
@@ -270,8 +272,8 @@ HTML;
 
 	/**
 	 * 支付结果后台通知处理
-	 * @param $notify_data array|string 通知数据
-	 * @param $callback callable 回调
+	 * @param array|string $data 通知数据
+	 * @param callable|null $callback 回调
 	 * @return null
 	 * @throws Exception
 	 */
@@ -281,15 +283,15 @@ HTML;
 				return call_user_func_array( $callback , [$data] );
 			}
 		}else{
-			throw new \Exception('Invalid paid notify data');
+			throw new Exception('Invalid paid notify data');
 		}
 	}
 
 	/**
 	 * 支付结果前台返回处理
 	 * @see https://docs.open.alipay.com/203/107090/#s2
-	 * @param $notify_data array|string 返回参数
-	 * @param $callback callable 回调
+	 * @param array|string $data 返回参数
+	 * @param callable|null $callback 回调
 	 * @return null
 	 * @throws Exception
 	 */
@@ -299,14 +301,14 @@ HTML;
 				return call_user_func_array( $callback , [$data] );
 			}
 		}else{
-			throw new \Exception('Invalid paid return data');
+			throw new Exception('Invalid paid return data');
 		}
 	}
 
 	/**
 	 * 交易查询(参数二选一,out_trade_no如果同时存在优先取trade_no)
-	 * @param $outTradeNo string 商户订单号
-	 * @param $tradeNo string 支付宝交易号
+	 * @param string $outTradeNo 商户订单号
+	 * @param string $tradeNo 支付宝交易号
 	 * @throws Exception
 	 * @return stdClass
 	 */
@@ -320,14 +322,11 @@ HTML;
 	/**
 	 * 退款(根据商户订单号)
 	 * @link https://docs.open.alipay.com/api_1/alipay.trade.refund/
-	 * @param $outtradeno
-	 * @param $amt
-	 * @param $reason
-	 * @param $requestno
-	 * @param string $operatorid
-	 * @param string $storeid
-	 * @param string $terminalid
-	 * @return result/json
+	 * @param string $outTradeNo
+	 * @param string $amt
+	 * @param string $requestNo
+	 * @return stdClass
+	 * @throws Exception
 	 */
 	public function refundByOutTradeNo($outTradeNo,$amt,$requestNo,$ext = []){
 		$params = array_merge([
@@ -341,14 +340,11 @@ HTML;
 	/**
 	 * 退款(根据支付订单号)
 	 * @link https://docs.open.alipay.com/api_1/alipay.trade.refund/
-	 * @param $tradeNo
-	 * @param $amt
-	 * @param $reason
-	 * @param $requestno
-	 * @param string $operatorid
-	 * @param string $storeid
-	 * @param string $terminalid
-	 * @return result/json
+	 * @param string $tradeNo
+	 * @param string $amt
+	 * @param string $requestNo
+	 * @return stdClass
+	 * @throws Exception
 	 */
 	public function refundByTradeNo($tradeNo,$amt,$requestNo,$ext = []){
 		$params = array_merge([
@@ -361,11 +357,12 @@ HTML;
 
 	/**
 	 * 查询交易(根据商户订单号)
-	 * @param string $outtradeno
+	 * @param string $outTradeNo
 	 * @return mixed
+	 * @throws Exception
 	 */
-	public function queryByOutTradeNo($outtradeno){
-		$params = ['out_trade_no'=>$outtradeno];
+	public function queryByOutTradeNo($outTradeNo){
+		$params = ['out_trade_no'=>$outTradeNo];
 		return $this->post('alipay.trade.query',$params);
 	}
 
@@ -373,6 +370,7 @@ HTML;
 	 * 查询交易(根据支付订单号)
 	 * @param string $tradeno
 	 * @return mixed
+	 * @throws Exception
 	 */
 	public function queryByTradeNo($tradeno){
 		$params = ['trade_no'=>$tradeno];
@@ -384,7 +382,7 @@ HTML;
 	 * @link https://docs.open.alipay.com/api_1/alipay.trade.fastpay.refund.query/
 	 */
 	public function queryRefund($outRequestNo,$tradeNo = null,$outTradeNo = null,$orgPid = null){
-		if(!$tradeNo && !$outTradeNo) throw new \Exception('TradeNo or OutTradeNo is required.');
+		if(!$tradeNo && !$outTradeNo) throw new Exception('TradeNo or OutTradeNo is required.');
 		$params = ['out_request_no' => $outRequestNo];
 		if($tradeNo) $params['trade_no'] = $tradeNo;
 		if($outTradeNo) $params['out_trade_no'] = $outTradeNo;
@@ -410,7 +408,7 @@ HTML;
 	 * @link https://docs.open.alipay.com/api_1/alipay.trade.close/
 	 */
 	public function close($tradeNo = null,$outTradeNo = null,$operatorId = null){
-		if(!$tradeNo && !$outTradeNo) throw new \Exception('TradeNo or OutTradeNo is required.');
+		if(!$tradeNo && !$outTradeNo) throw new Exception('TradeNo or OutTradeNo is required.');
 		$params = [];
 		if($tradeNo) $params['trade_no'] = $tradeNo;
 		if($outTradeNo) $params['out_trade_no'] = $outTradeNo;
@@ -422,7 +420,7 @@ HTML;
 	 * @link https://docs.open.alipay.com/api_1/alipay.trade.cancel/
 	 */
 	public function cancel($tradeNo = null,$outTradeNo = null){
-		if(!$tradeNo && !$outTradeNo) throw new \Exception('TradeNo or OutTradeNo is required.');
+		if(!$tradeNo && !$outTradeNo) throw new Exception('TradeNo or OutTradeNo is required.');
 		$params = [];
 		if($tradeNo) $params['trade_no'] = $tradeNo;
 		if($outTradeNo) $params['out_trade_no'] = $outTradeNo;
@@ -478,29 +476,34 @@ HTML;
 		return implode('&',$finals);
 	}
 
-	private function buildParams($apiName,$params){
+	private function commonParams($method){
 		$sysParams["app_id"] = $this->config['app_id'];
 		$sysParams["version"] = $this->config['version'];
 		$sysParams["format"] = $this->config['format'];
 		$sysParams["sign_type"] = $this->config['sign_type'];
-		$sysParams["method"] = $apiName;
+		$sysParams["method"] = $method;
 		$sysParams["timestamp"] = date("Y-m-d H:i:s");
 		$sysParams["charset"] = $this->config['input_charset'];
-		$sysParams["notify_url"] = $this->config['notify_url'];
-		$sysParams["return_url"] = $this->config['return_url'];
+		return $sysParams;
+	}
 
-		$params = ['biz_content'=>json_encode($params)];
-
-		$sysParams["sign"] = $this->sign(array_merge($params, $sysParams), $this->config['sign_type']);
-		return array_merge($sysParams,$params);
+	/**
+	 * 添加公共请求参数并添加签名信息
+	 *
+	 */
+	private function buildParams($apiName,$params){
+		$common = $this->commonParams($apiName);
+		$bizContent = ['biz_content'=>json_encode($params,JSON_UNESCAPED_UNICODE)];
+		$all = array_merge($bizContent, $common);
+		$all["sign"] = $this->sign($all, $this->config['sign_type']);
+		return $all;
 	}
 
 	protected function post($method, $params) {
-		$allParams = $this->buildParams($method,$params);
-		$url = self::GATEWAY_OPENAPI . "?" . http_build_query($allParams);
-
+		$common = $this->commonParams($method);
+		$url = self::GATEWAY_OPENAPI . "?" . http_build_query($common);
+		$params = $this->buildParams($method,$params);
 		$r = $this->httpClient->post($url,$this->config['input_charset'],$params);
-
 		$jsonObj = json_decode($r);
 		$sign = $jsonObj->sign;
 		$node = str_replace('.','_',$method) . '_response';
@@ -508,7 +511,37 @@ HTML;
 		$signData = json_encode($jsonObj->$node,JSON_UNESCAPED_UNICODE);//注意这里一定要escape，否则中文会输出为unicode，导致验证签名错误
 		$checkResult = $this->verify($signData, $sign);
 		if (!$checkResult) {
-			throw new \Exception("check sign Fail! [sign=" . $sign . ", signData=" . $signData . "]");
+			throw new Exception("check sign Fail! [sign=" . $sign . ", signData=" . $signData . "]");
+		}
+		return $jsonObj->$node;
+	}
+
+	protected function post0($method, $params) {
+//		$allParams = $this->buildParams($method,$params);
+//		$url = self::GATEWAY_OPENAPI . "?" . http_build_query($allParams);
+		$sysParams["app_id"] = $this->config['app_id'];
+		$sysParams["version"] = $this->config['version'];
+		$sysParams["format"] = $this->config['format'];
+		$sysParams["sign_type"] = $this->config['sign_type'];
+		$sysParams["method"] = $method;
+		$sysParams["timestamp"] = date("Y-m-d H:i:s");
+		$sysParams["charset"] = $this->config['input_charset'];
+
+		$params = ['biz_content'=>json_encode($params,JSON_UNESCAPED_UNICODE)];
+
+		$sysParams["sign"] = $this->sign(array_merge($params, $sysParams), $this->config['sign_type']);
+
+		$url = self::GATEWAY_OPENAPI . "?" . http_build_query($sysParams);
+		$r = $this->httpClient->post($url,$this->config['input_charset'],$params);
+//error_log(print_r($r,true));
+		$jsonObj = json_decode($r);
+		$sign = $jsonObj->sign;
+		$node = str_replace('.','_',$method) . '_response';
+
+		$signData = json_encode($jsonObj->$node,JSON_UNESCAPED_UNICODE);//注意这里一定要escape，否则中文会输出为unicode，导致验证签名错误
+		$checkResult = $this->verify($signData, $sign);
+		if (!$checkResult) {
+			throw new Exception("check sign Fail! [sign=" . $sign . ", signData=" . $signData . "]");
 		}
 		return $jsonObj->$node;
 	}
@@ -528,11 +561,11 @@ HTML;
 		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
 		$resp = curl_exec($ch);
 		if (curl_errno($ch)) {
-			throw new \Exception(curl_error($ch), 0);
+			throw new Exception(curl_error($ch), 0);
 		} else {
 			$httpStatusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 			if (200 !== $httpStatusCode) {
-				throw new \Exception($resp, $httpStatusCode);
+				throw new Exception($resp, $httpStatusCode);
 			}
 		}
 		curl_close($ch);
@@ -544,7 +577,7 @@ HTML;
 		$signData = json_encode($jsonObj->$node,JSON_UNESCAPED_UNICODE);//注意这里一定要escape，否则中文会输出为unicode，导致验证签名错误
 		$checkResult = $this->verify($signData, $sign);
 		if (!$checkResult) {
-			throw new \Exception("check sign Fail! [sign=" . $sign . ", signData=" . $signData . "]");
+			throw new Exception("check sign Fail! [sign=" . $sign . ", signData=" . $signData . "]");
 		}
 
 		return $jsonObj->$node;
