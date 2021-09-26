@@ -2,6 +2,7 @@
 
 namespace zhangv\alipay\util;
 use zhangv\alipay\AliPay;
+use zhangv\alipay\util\CertUtils;
 
 /**
  * 签名/验签辅助类
@@ -15,17 +16,38 @@ class Signer{
 	private $publicKey,$privateKey;
 	private $alipayPublicKey;
 	private $charset;
+	private $certMode = false; //是否证书模式
+	private $alipayRootCertSN = null;
+	private $appCertSN = null;
 
-	public function __construct($publicKey,$privateKey,$alipayPublicKey,$charset = 'UTF-8'){
-		if(is_file($publicKey)) $this->publicKey = file_get_contents($publicKey);
-		else $this->publicKey = "-----BEGIN PUBLIC KEY-----\n" . wordwrap($publicKey, 64, "\n", true) . "\n-----END PUBLIC KEY-----";
-
-		if(is_file($privateKey)) $this->privateKey = file_get_contents($privateKey);
-		else $this->privateKey = "-----BEGIN RSA PRIVATE KEY-----\n" . wordwrap($privateKey, 64, "\n", true) . "\n-----END RSA PRIVATE KEY-----";
-
-		if(is_file($alipayPublicKey)) $this->alipayPublicKey = file_get_contents($alipayPublicKey);
-		else $this->alipayPublicKey = "-----BEGIN PUBLIC KEY-----\n" . wordwrap($alipayPublicKey, 64, "\n", true) . "\n-----END PUBLIC KEY-----";
-
+	/**
+	 * RSA模式初始化
+	 * @param publicKey 应用公钥字符串
+	 * @param privateKey 应用私钥字符串
+	 * @param alipayPublicKey 支付宝公钥字符串
+	 */
+	public function __construct($publicKey,$privateKey,$alipayPublicKey,$charset = 'UTF-8',$alipayRootCert = null){
+		if($alipayRootCert){
+			$this->certMode = true;
+			$cu = new CertUtils();
+			if(is_file($privateKey)) $this->privateKey = file_get_contents($privateKey);
+			else $this->privateKey = "-----BEGIN RSA PRIVATE KEY-----\n" . wordwrap($privateKey, 64, "\n", true) . "\n-----END RSA PRIVATE KEY-----";
+	
+			$this->publicKey = $cu->getPublicKey($publicKey);
+			$this->alipayPublicKey = $cu->getPublicKey($alipayPublicKey);
+			$this->alipayRootCertSN = $cu->getRootCertSN($alipayRootCert);
+			$this->appCertSN = $cu->getCertSN($this->publicKey); //todo test
+		}else{
+			if(is_file($publicKey)) $this->publicKey = file_get_contents($publicKey);
+			else $this->publicKey = "-----BEGIN PUBLIC KEY-----\n" . wordwrap($publicKey, 64, "\n", true) . "\n-----END PUBLIC KEY-----";
+	
+			if(is_file($privateKey)) $this->privateKey = file_get_contents($privateKey);
+			else $this->privateKey = "-----BEGIN RSA PRIVATE KEY-----\n" . wordwrap($privateKey, 64, "\n", true) . "\n-----END RSA PRIVATE KEY-----";
+	
+			if(is_file($alipayPublicKey)) $this->alipayPublicKey = file_get_contents($alipayPublicKey);
+			else $this->alipayPublicKey = "-----BEGIN PUBLIC KEY-----\n" . wordwrap($alipayPublicKey, 64, "\n", true) . "\n-----END PUBLIC KEY-----";	
+		}
+		
 		$this->charset = $charset;
 	}
 
@@ -59,6 +81,12 @@ class Signer{
 	 * @return string
 	 */
 	public function sign($data,$signType) {
+		if($this->certMode === true){
+			$data = array_merge($data,[
+				'alipay_root_cert_sn' => $this->alipayRootCertSN,
+				'app_cert_sn' => $this->appCertSN
+			]);
+		}
 		ksort($data);
 		reset($data);
 		$stringSignTemp = $this->createQueryString($data);
@@ -160,8 +188,6 @@ class Signer{
 	 */
 	private function rsaSign($data,$signtype = AliPay::SIGNTYPE_RSA) {
 		$res = $this->privateKey;
-//		$res = (string)openssl_get_privatekey($res);
-//		var_dump($res);
 		$sign = null;
 		if(AliPay::SIGNTYPE_RSA2 == $signtype){
 			openssl_sign($data, $sign, $res, OPENSSL_ALGO_SHA256);
@@ -178,10 +204,17 @@ class Signer{
 	 * @return bool
 	 * @throws Exception
 	 */
-	public function verify($data){
+	public function verify($data, $sign = null){
 		$signType = $data['sign_type'];
-		$sign = $data['sign'];
+		if(!$sign) $sign = $data['sign'];
 
+		if($this->certMode === true){
+			$data = array_merge($data,[
+				'alipay_root_cert_sn' => $this->alipayRootCertSN,
+				'app_cert_sn' => $this->appCertSN
+			]);
+		}
+		
 		$params = $this->filter($data); //过滤待签名数据
 		ksort($params);
 		$urlstring = $this->createQueryString($params);

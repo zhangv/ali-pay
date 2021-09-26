@@ -90,7 +90,12 @@ HTML;
 
 	public function getSigner(){
 		if(empty($this->config['public_key']) || empty($this->config['private_key'])) throw new Exception('Public key and private key are required');
-		if(!$this->signer) $this->signer = new Signer($this->config['public_key'],$this->config['private_key'],$this->config['alipay_public_key']);
+		$alipayRootCert = (!empty($this->config['alipay_root_cert']))?$this->config['alipay_root_cert']:null;
+		if(!$this->signer) 
+			$this->signer = new Signer(
+				$this->config['public_key'],$this->config['private_key'],$this->config['alipay_public_key'],
+				$alipayRootCert,$this->config['input_charset']
+		);
 		return $this->signer;
 	}
 
@@ -278,7 +283,7 @@ HTML;
 	 * @throws Exception
 	 */
 	public function onPaidNotify($data,callable $callback = null){
-		if(true === $this->verifySignature($data)){
+		if(true === $this->signer->verify($data)){
 			if($callback && is_callable($callback)){
 				return call_user_func_array( $callback , [$data] );
 			}
@@ -296,7 +301,7 @@ HTML;
 	 * @throws Exception
 	 */
 	public function onPaidReturn($data,callable $callback = null){
-		if(true === $this->verifySignature($data)){
+		if(true === $this->signer->verify($data)){
 			if($callback && is_callable($callback)){
 				return call_user_func_array( $callback , [$data] );
 			}
@@ -495,7 +500,7 @@ HTML;
 		$common = $this->commonParams($apiName);
 		$bizContent = ['biz_content'=>json_encode($params,JSON_UNESCAPED_UNICODE)];
 		$all = array_merge($bizContent, $common);
-		$all["sign"] = $this->sign($all, $this->config['sign_type']);
+		$all["sign"] = $this->signer->sign($all, $this->config['sign_type']);
 		return $all;
 	}
 
@@ -509,37 +514,7 @@ HTML;
 		$node = str_replace('.','_',$method) . '_response';
 
 		$signData = json_encode($jsonObj->$node,JSON_UNESCAPED_UNICODE);//注意这里一定要escape，否则中文会输出为unicode，导致验证签名错误
-		$checkResult = $this->verify($signData, $sign);
-		if (!$checkResult) {
-			throw new Exception("check sign Fail! [sign=" . $sign . ", signData=" . $signData . "]");
-		}
-		return $jsonObj->$node;
-	}
-
-	protected function post0($method, $params) {
-//		$allParams = $this->buildParams($method,$params);
-//		$url = self::GATEWAY_OPENAPI . "?" . http_build_query($allParams);
-		$sysParams["app_id"] = $this->config['app_id'];
-		$sysParams["version"] = $this->config['version'];
-		$sysParams["format"] = $this->config['format'];
-		$sysParams["sign_type"] = $this->config['sign_type'];
-		$sysParams["method"] = $method;
-		$sysParams["timestamp"] = date("Y-m-d H:i:s");
-		$sysParams["charset"] = $this->config['input_charset'];
-
-		$params = ['biz_content'=>json_encode($params,JSON_UNESCAPED_UNICODE)];
-
-		$sysParams["sign"] = $this->sign(array_merge($params, $sysParams), $this->config['sign_type']);
-
-		$url = self::GATEWAY_OPENAPI . "?" . http_build_query($sysParams);
-		$r = $this->httpClient->post($url,$this->config['input_charset'],$params);
-//error_log(print_r($r,true));
-		$jsonObj = json_decode($r);
-		$sign = $jsonObj->sign;
-		$node = str_replace('.','_',$method) . '_response';
-
-		$signData = json_encode($jsonObj->$node,JSON_UNESCAPED_UNICODE);//注意这里一定要escape，否则中文会输出为unicode，导致验证签名错误
-		$checkResult = $this->verify($signData, $sign);
+		$checkResult = $this->signer->verify($signData, $sign);
 		if (!$checkResult) {
 			throw new Exception("check sign Fail! [sign=" . $sign . ", signData=" . $signData . "]");
 		}
@@ -549,33 +524,16 @@ HTML;
 	protected function get($method, $params) {
 		$allParams = $this->buildParams($method,$params);
 		$url = self::GATEWAY_OPENAPI . "?" . http_build_query( $allParams);
-		$ch = curl_init();
-		curl_setopt($ch, CURLOPT_URL, $url);
-		curl_setopt($ch, CURLOPT_FAILONERROR, false);
-		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 		$inputcharset = $this->config['input_charset'];
-		$r = $this->httpClient->get($url,$inputcharset,$allParams);
-
 		$headers = array('content-type: application/x-www-form-urlencoded;charset=' . $inputcharset);
-		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-		$resp = curl_exec($ch);
-		if (curl_errno($ch)) {
-			throw new Exception(curl_error($ch), 0);
-		} else {
-			$httpStatusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-			if (200 !== $httpStatusCode) {
-				throw new Exception($resp, $httpStatusCode);
-			}
-		}
-		curl_close($ch);
+		
+		$r = $this->httpClient->get($url,$inputcharset,$allParams,$headers);
 
-		$r = $resp;
 		$jsonObj = json_decode($r);
 		$sign = $jsonObj->sign;
 		$node = str_replace('.','_',$method) . '_response';
 		$signData = json_encode($jsonObj->$node,JSON_UNESCAPED_UNICODE);//注意这里一定要escape，否则中文会输出为unicode，导致验证签名错误
-		$checkResult = $this->verify($signData, $sign);
+		$checkResult = $this->signer->verify($signData, $sign);
 		if (!$checkResult) {
 			throw new Exception("check sign Fail! [sign=" . $sign . ", signData=" . $signData . "]");
 		}
@@ -583,19 +541,6 @@ HTML;
 		return $jsonObj->$node;
 	}
 
-	private function verify($data, $sign) {
-		$signType = $this->config['sign_type'];
-		$res = "-----BEGIN PUBLIC KEY-----\n" .
-			wordwrap($this->config['alipay_public_key'], 64, "\n", true) .
-			"\n-----END PUBLIC KEY-----";
-
-		if ("RSA2" == $signType) {
-			$result = (bool)openssl_verify($data, base64_decode($sign), $res, OPENSSL_ALGO_SHA256);
-		} else {
-			$result = (bool)openssl_verify($data, base64_decode($sign), $res);
-		}
-		return $result;
-	}
 
 	/**
 	 * 验证退款异步通知参数合法性
@@ -603,79 +548,12 @@ HTML;
 	 * @return boolean
 	 */
 	public function verifyRefundNotify($data) {
-		$params = $this->filter($data); //过滤待签名数据
+		$verified = $this->signer->verify($data);
 		$responseTxt = 'true';
-		if( !empty( $params['notify_id'] ) ) {
-			$responseTxt = $this->getResponseByNotifyId($params['notify_id']);
+		if( !empty( $data['notify_id'] ) ) {
+			$responseTxt = $this->getResponseByNotifyId($data['notify_id']);
 		}
-		if($this->config['sign_type'] == 'RSA') {
-			$signString = $this->getSignString($data);
-			return $this->rsaVerify($params,$signString);
-		} else {
-			$sign = $this->sign($data,$this->config['sign_type']);
-			if ( preg_match("/true$/i",$responseTxt) && ($sign == $data['sign']) ) {
-				return true;
-			} else {
-				return false;
-			}
-		}
-	}
-
-	/**
-	 * @param $data
-	 * @return bool
-	 * @throws Exception
-	 */
-	public function verifySignature($data){
-		return $this->signer-> verify($data);
-	}
-
-	protected function getSignContent($params) {
-		ksort($params);
-
-		$stringToBeSigned = "";
-		$i = 0;
-		foreach ($params as $k => $v) {
-			if (false === $this->checkEmpty($v) && "@" != substr($v, 0, 1)) {
-				// 转换成目标字符集
-				$v = $this->characet($v, $this->config['input_charset']);
-
-				if ($i == 0) {
-					$stringToBeSigned .= "$k" . "=" . "$v";
-				} else {
-					$stringToBeSigned .= "&" . "$k" . "=" . "$v";
-				}
-				$i++;
-			}
-		}
-
-		unset ($k, $v);
-		return $stringToBeSigned;
-	}
-
-	/**
-	 * 校验$value是否非空
-	 *  if not set ,return true;
-	 *    if is null , return true;
-	 **/
-	protected function checkEmpty($value) {
-		if (!isset($value))
-			return true;
-		if ($value === null)
-			return true;
-		if (trim($value) === "")
-			return true;
-
-		return false;
-	}
-
-	/**
-	 * 数据签名
-	 * @param $data
-	 * @return string
-	 */
-	private function sign($data,$signType) {
-		return $this->signer->sign($data,$signType);
+		return ( preg_match("/true$/i",$responseTxt) && $verified );
 	}
 
 	/**
@@ -690,23 +568,10 @@ HTML;
 	public function getResponseByNotifyId($notifyId) {
 		$transport = strtolower(trim($this->config['transport']));
 		$partner = trim($this->config['partner']);
-		$verify_url = $transport == 'https'?self::HTTPS_VERIFY_URL:self::HTTP_VERIFY_URL;
-		$verify_url = "{$verify_url}partner={$partner}&notify_id={$notifyId}";
-		$responseTxt = $this->httpGet($verify_url);
+		$verifyUrl = $transport == 'https'?self::HTTPS_VERIFY_URL:self::HTTP_VERIFY_URL;
+		$verifyUrl = "{$verifyUrl}partner={$partner}&notify_id={$notifyId}";
+		$responseTxt = $this->httpClient->get($verifyUrl);
 		return $responseTxt;
 	}
-
-	private function httpGet($url) {
-		$curl = curl_init($url);
-		curl_setopt($curl, CURLOPT_HEADER, 0 ); // 过滤HTTP头
-		curl_setopt($curl, CURLOPT_RETURNTRANSFER, 1);// 显示输出结果
-		curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, true);//SSL证书认证
-		curl_setopt($curl, CURLOPT_SSL_VERIFYHOST, 2);//严格认证
-		curl_setopt($curl, CURLOPT_CAINFO,$this->config['cacert']);//证书地址
-		$responseText = curl_exec($curl);
-		curl_close($curl);
-		return $responseText;
-	}
-
 
 }

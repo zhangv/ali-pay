@@ -14,40 +14,39 @@ class HttpClient{
 	private $timeout = 1;
 
 	public function __construct($timeout = 1) {
-		$this->initInstance($timeout);
+		$this->timeout = $timeout;
+		$this->initInstance();
 	}
 
-	public function initInstance($timeout){
+	public function initInstance(){
 		if(!$this->instance) {
 			$this->instance = curl_init();
-			if ($timeout < 1) {
-				curl_setopt($this->instance, CURLOPT_TIMEOUT_MS, intval($timeout * 1000));
+			if ($this->timeout < 1) {
+				curl_setopt($this->instance, CURLOPT_TIMEOUT_MS, intval($this->timeout * 1000));
 			} else {
-				curl_setopt($this->instance, CURLOPT_TIMEOUT, intval($timeout));
+				curl_setopt($this->instance, CURLOPT_TIMEOUT, intval($this->timeout));
 			}
-			curl_setopt($this->instance, CURLOPT_RETURNTRANSFER, true);
+			curl_setopt($this->instance, CURLOPT_RETURNTRANSFER, false);
 			curl_setopt($this->instance, CURLOPT_FOLLOWLOCATION, true);
 			curl_setopt($this->instance, CURLOPT_SSL_VERIFYPEER, false);
 		}
+		return $this->instance;
 	}
 
-	public function get($url, $inputcharset, $params = array(),$headers = array(),$opts = array()) {
-		$ch = curl_init();
+	public function get($url, $params = array(),$headers = array(),$opts = array()) {
+		$ch = $this->initInstance();
 		if($params && count($params) > 0) $url .= '?' . http_build_query($params);
 		curl_setopt($ch, CURLOPT_URL, $url);
-		curl_setopt($ch, CURLOPT_FAILONERROR, false);
-		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-
-		$headers[] = 'content-type: application/x-www-form-urlencoded;charset=' . $inputcharset;
 		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
 		$resp = curl_exec($ch);
-		if (curl_errno($ch)) {
-			throw new \Exception(curl_error($ch), 0);
+		$this->errNo = curl_errno($ch);
+		if($this->errNo){
+			throw new \Exception($this->errNo, 0);
 		} else {
-			$httpStatusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-			if (200 !== $httpStatusCode) {
-				throw new \Exception($resp, $httpStatusCode);
+			$this->info = curl_getinfo($ch);
+			$statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+			if (200 !== $statusCode) {
+				throw new \Exception($resp, $statusCode);
 			}
 		}
 		curl_close($ch);
@@ -55,11 +54,8 @@ class HttpClient{
 	}
 
 	public function post($url, $inputcharset, $params = array(),$headers = array(),$opts = array()) {
-		$ch = curl_init();
+		$ch = $this->initInstance();
 		curl_setopt($ch, CURLOPT_URL, $url);
-		curl_setopt($ch, CURLOPT_FAILONERROR, false);
-		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 		$postBodyString = "";
 		$encodeArray = Array();
 		$postMultipart = false;
@@ -89,12 +85,14 @@ class HttpClient{
 		}
 		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
 		$resp = curl_exec($ch);
-		if (curl_errno($ch)) {
-			throw new \Exception(curl_error($ch), 0);
+		$this->errNo = curl_errno($ch);
+		if ($this->errNo) {
+			throw new \Exception($this->errNo, 0);
 		} else {
-			$httpStatusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-			if (200 !== $httpStatusCode) {
-				throw new \Exception($resp, $httpStatusCode);
+			$this->info = curl_getinfo($ch);
+			$statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+			if (200 !== $statusCode) {
+				throw new \Exception($resp, $statusCode);
 			}
 		}
 		curl_close($ch);
@@ -115,13 +113,6 @@ class HttpClient{
 			}
 		}
 		return $data;
-	}
-
-	private function execute() {
-		$result = curl_exec($this->instance);
-		$this->errNo = curl_errno($this->instance);
-		$this->info = curl_getinfo($this->instance);
-		return $result;
 	}
 
 	public function setOpt($optArray) {
