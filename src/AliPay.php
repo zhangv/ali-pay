@@ -84,8 +84,12 @@ HTML;
 	}
 
 	public function getHttpClient(){
-		if(!$this->httpClient) $this->httpClient = new HttpClient();
+		if(!$this->httpClient) $this->httpClient = new HttpClient(3);
 		return $this->httpClient;
+	}
+
+	public function setHttpClient($httpClient){
+		$this->httpClient = $httpClient;
 	}
 
 	public function getSigner(){
@@ -276,41 +280,6 @@ HTML;
 	}
 
 	/**
-	 * 支付结果后台通知处理
-	 * @param array|string $data 通知数据
-	 * @param callable|null $callback 回调
-	 * @return null
-	 * @throws Exception
-	 */
-	public function onPaidNotify($data,callable $callback = null){
-		if(true === $this->signer->verify($data)){
-			if($callback && is_callable($callback)){
-				return call_user_func_array( $callback , [$data] );
-			}
-		}else{
-			throw new Exception('Invalid paid notify data');
-		}
-	}
-
-	/**
-	 * 支付结果前台返回处理
-	 * @see https://docs.open.alipay.com/203/107090/#s2
-	 * @param array|string $data 返回参数
-	 * @param callable|null $callback 回调
-	 * @return null
-	 * @throws Exception
-	 */
-	public function onPaidReturn($data,callable $callback = null){
-		if(true === $this->signer->verify($data)){
-			if($callback && is_callable($callback)){
-				return call_user_func_array( $callback , [$data] );
-			}
-		}else{
-			throw new Exception('Invalid paid return data');
-		}
-	}
-
-	/**
 	 * 交易查询(参数二选一,out_trade_no如果同时存在优先取trade_no)
 	 * @param string $outTradeNo 商户订单号
 	 * @param string $tradeNo 支付宝交易号
@@ -457,10 +426,8 @@ HTML;
 			if(!$v || trim($v)=='' ) continue;
 			$sHtml.= "<input type='hidden' name='{$k}' value='{$v}'/>";
 		}
-
 		//submit按钮控件请不要含有name属性
 		$sHtml = $sHtml."<input type='submit' value='ok'></form>";
-
 		$sHtml = $sHtml."<script>document.forms['alipaysubmit'].submit();</script>";
 		return $sHtml;
 	}
@@ -500,7 +467,7 @@ HTML;
 		$common = $this->commonParams($apiName);
 		$bizContent = ['biz_content'=>json_encode($params,JSON_UNESCAPED_UNICODE)];
 		$all = array_merge($bizContent, $common);
-		$all["sign"] = $this->signer->sign($all, $this->config['sign_type']);
+		$all = $this->signer->sign($all, $this->config['sign_type']);
 		return $all;
 	}
 
@@ -514,9 +481,9 @@ HTML;
 		$node = str_replace('.','_',$method) . '_response';
 
 		$signData = json_encode($jsonObj->$node,JSON_UNESCAPED_UNICODE);//注意这里一定要escape，否则中文会输出为unicode，导致验证签名错误
-		$checkResult = $this->signer->verify($signData, $sign);
+		$checkResult = $this->signer->verifySync($signData, $sign);
 		if (!$checkResult) {
-			throw new Exception("check sign Fail! [sign=" . $sign . ", signData=" . $signData . "]");
+			throw new Exception("check sign Fail! sign=[" . $sign . "], signData=[" . $signData . "]");
 		}
 		return $jsonObj->$node;
 	}
@@ -533,7 +500,7 @@ HTML;
 		$sign = $jsonObj->sign;
 		$node = str_replace('.','_',$method) . '_response';
 		$signData = json_encode($jsonObj->$node,JSON_UNESCAPED_UNICODE);//注意这里一定要escape，否则中文会输出为unicode，导致验证签名错误
-		$checkResult = $this->signer->verify($signData, $sign);
+		$checkResult = $this->signer->verifySync($signData, $sign);
 		if (!$checkResult) {
 			throw new Exception("check sign Fail! [sign=" . $sign . ", signData=" . $signData . "]");
 		}
@@ -541,6 +508,40 @@ HTML;
 		return $jsonObj->$node;
 	}
 
+	/**
+	 * 支付结果后台通知处理
+	 * @param array|string $data 通知数据
+	 * @param callable|null $callback 回调
+	 * @return null
+	 * @throws Exception
+	 */
+	public function onPaidNotify($data,callable $callback = null){
+		if(true === $this->signer->verify($data)){
+			if($callback && is_callable($callback)){
+				return call_user_func_array( $callback , [$data] );
+			}
+		}else{
+			throw new Exception('Invalid paid notify data');
+		}
+	}
+
+	/**
+	 * 支付结果前台返回处理
+	 * @see https://docs.open.alipay.com/203/107090/#s2
+	 * @param array|string $data 返回参数
+	 * @param callable|null $callback 回调
+	 * @return null
+	 * @throws Exception
+	 */
+	public function onPaidReturn($data,callable $callback = null){
+		if(true === $this->signer->verify($data)){
+			if($callback && is_callable($callback)){
+				return call_user_func_array( $callback , [$data] );
+			}
+		}else{
+			throw new Exception('Invalid paid return data');
+		}
+	}
 
 	/**
 	 * 验证退款异步通知参数合法性

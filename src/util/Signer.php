@@ -13,38 +13,42 @@ use zhangv\alipay\util\CertUtils;
  */
 class Signer{
 
-	private $publicKey,$privateKey;
+	private $publicKey;
+	private $privateKey;
 	private $alipayPublicKey;
 	private $charset;
 	private $certMode = false; //是否证书模式
+	//支付宝根证书SN
 	private $alipayRootCertSN = null;
+	//应用公钥证书SN
 	private $appCertSN = null;
 
 	/**
-	 * RSA模式初始化
-	 * @param publicKey 应用公钥字符串
-	 * @param privateKey 应用私钥字符串
-	 * @param alipayPublicKey 支付宝公钥字符串
+	 * @param publicKey 应用公钥字符串 / 应用公钥证书路径
+	 * @param privateKey 应用私钥字符串 / 应用私钥文件路径
+	 * @param alipayPublicKey 支付宝公钥字符串 / 支付宝公钥证书路径
+	 * @param alipayRootCert 支付宝根证书路径
 	 */
-	public function __construct($publicKey,$privateKey,$alipayPublicKey,$charset = 'UTF-8',$alipayRootCert = null){
+	public function __construct($publicKey,$privateKey,$alipayPublicKey,$alipayRootCert = null,$charset = 'UTF-8'){
 		if($alipayRootCert){
 			$this->certMode = true;
 			$cu = new CertUtils();
-			if(is_file($privateKey)) $this->privateKey = file_get_contents($privateKey);
-			else $this->privateKey = "-----BEGIN RSA PRIVATE KEY-----\n" . wordwrap($privateKey, 64, "\n", true) . "\n-----END RSA PRIVATE KEY-----";
+			if(file_exists($privateKey)) $this->privateKey = file_get_contents($privateKey);
+			else $this->privateKey = $privateKey;
+			$this->privateKey = "-----BEGIN RSA PRIVATE KEY-----\n" . wordwrap($this->privateKey, 64, "\n", true) . "\n-----END RSA PRIVATE KEY-----";
 	
-			$this->publicKey = $cu->getPublicKey($publicKey);
-			$this->alipayPublicKey = $cu->getPublicKey($alipayPublicKey);
+			$this->publicKey = $cu->getPublicKey($publicKey); //提取应用公钥
+			$this->alipayPublicKey = $cu->getPublicKey($alipayPublicKey);//支付宝公钥证书 - 貌似没用
 			$this->alipayRootCertSN = $cu->getRootCertSN($alipayRootCert);
-			$this->appCertSN = $cu->getCertSN($this->publicKey); //todo test
+			$this->appCertSN = $cu->getCertSN($publicKey); //提取应用公钥证书SN
 		}else{
-			if(is_file($publicKey)) $this->publicKey = file_get_contents($publicKey);
+			if(file_exists($publicKey)) $this->publicKey = file_get_contents($publicKey);
 			else $this->publicKey = "-----BEGIN PUBLIC KEY-----\n" . wordwrap($publicKey, 64, "\n", true) . "\n-----END PUBLIC KEY-----";
 	
-			if(is_file($privateKey)) $this->privateKey = file_get_contents($privateKey);
+			if(file_exists($privateKey)) $this->privateKey = file_get_contents($privateKey);
 			else $this->privateKey = "-----BEGIN RSA PRIVATE KEY-----\n" . wordwrap($privateKey, 64, "\n", true) . "\n-----END RSA PRIVATE KEY-----";
 	
-			if(is_file($alipayPublicKey)) $this->alipayPublicKey = file_get_contents($alipayPublicKey);
+			if(file_exists($alipayPublicKey)) $this->alipayPublicKey = file_get_contents($alipayPublicKey);
 			else $this->alipayPublicKey = "-----BEGIN PUBLIC KEY-----\n" . wordwrap($alipayPublicKey, 64, "\n", true) . "\n-----END PUBLIC KEY-----";	
 		}
 		
@@ -78,7 +82,7 @@ class Signer{
 	 * 数据签名
 	 * @param $data
 	 * @param $signType
-	 * @return string
+	 * @return array
 	 */
 	public function sign($data,$signType) {
 		if($this->certMode === true){
@@ -103,7 +107,8 @@ class Signer{
 			default:
 				throw new \Exception('Not supported sign type - '.$signType);
 		}
-		return $sign;
+		$data['sign'] = $sign;
+		return $data;
 	}
 
 	/**
@@ -187,12 +192,12 @@ class Signer{
 	 * @throws Exception
 	 */
 	private function rsaSign($data,$signtype = AliPay::SIGNTYPE_RSA) {
-		$res = $this->privateKey;
+		$pk = $this->privateKey;
 		$sign = null;
 		if(AliPay::SIGNTYPE_RSA2 == $signtype){
-			openssl_sign($data, $sign, $res, OPENSSL_ALGO_SHA256);
+			openssl_sign($data, $sign, $pk, OPENSSL_ALGO_SHA256);
 		}else{
-			openssl_sign($data, $sign, $res);
+			openssl_sign($data, $sign, $pk);
 		}
 //		openssl_free_key($res);
 		$sign = base64_encode($sign);

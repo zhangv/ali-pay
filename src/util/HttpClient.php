@@ -26,11 +26,16 @@ class HttpClient{
 			} else {
 				curl_setopt($this->instance, CURLOPT_TIMEOUT, intval($this->timeout));
 			}
-			curl_setopt($this->instance, CURLOPT_RETURNTRANSFER, false);
+			curl_setopt($this->instance, CURLOPT_RETURNTRANSFER, true);
 			curl_setopt($this->instance, CURLOPT_FOLLOWLOCATION, true);
 			curl_setopt($this->instance, CURLOPT_SSL_VERIFYPEER, false);
 		}
 		return $this->instance;
+	}
+
+	public function __destruct(){
+		curl_close($this->instance);
+		unset($this->instance);
 	}
 
 	public function get($url, $params = array(),$headers = array(),$opts = array()) {
@@ -40,19 +45,25 @@ class HttpClient{
 		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
 		$resp = curl_exec($ch);
 		$this->errNo = curl_errno($ch);
-		if($this->errNo){
-			throw new \Exception($this->errNo, 0);
+		$this->info = curl_getinfo($ch);
+		$err = curl_error($ch);
+		if ($this->errNo) {
+			error_log("[{$this->errNo}]{$err}");
+			throw new \Exception("[{$this->errNo}]{$err}");
 		} else {
-			$this->info = curl_getinfo($ch);
 			$statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 			if (200 !== $statusCode) {
-				throw new \Exception($resp, $statusCode);
+				error_log("[$statusCode]{$err}");
+				throw new \Exception("[$statusCode]{$err}");
 			}
 		}
-		curl_close($ch);
+		// curl_close($ch);
 		return $resp;
 	}
 
+	private function getMillisecond(){
+		return time() * 1000;
+	}
 	public function post($url, $inputcharset, $params = array(),$headers = array(),$opts = array()) {
 		$ch = $this->initInstance();
 		curl_setopt($ch, CURLOPT_URL, $url);
@@ -86,16 +97,19 @@ class HttpClient{
 		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
 		$resp = curl_exec($ch);
 		$this->errNo = curl_errno($ch);
+		$this->info = curl_getinfo($ch);
+		$err = curl_error($ch);
 		if ($this->errNo) {
-			throw new \Exception($this->errNo, 0);
+			error_log("[{$this->errNo}]{$err}");
+			throw new \Exception("[{$this->errNo}]{$err}");
 		} else {
-			$this->info = curl_getinfo($ch);
 			$statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 			if (200 !== $statusCode) {
-				throw new \Exception($resp, $statusCode);
+				error_log("[$statusCode]{$err}");
+				throw new \Exception("[$statusCode]{$err}");
 			}
 		}
-		curl_close($ch);
+		// curl_close($ch);
 		return $resp;
 	}
 
