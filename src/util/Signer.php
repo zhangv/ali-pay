@@ -205,12 +205,14 @@ class Signer{
 	}
 
 	/**
+	 * 用于处理异步的通知返回
+	 * 由于异步通知和同步返回的格式不一样
 	 * @param $data
 	 * @return bool
 	 * @throws Exception
 	 */
 	public function verify($data, $sign = null){
-		$signType = $data['sign_type'];
+		$signType = isset($data['sign_type'])?$data['sign_type']:AliPay::SIGNTYPE_RSA2;//返回的数据中可能没有sign_type
 		if(!$sign) $sign = $data['sign'];
 
 		if($this->certMode === true){
@@ -223,11 +225,18 @@ class Signer{
 		$params = $this->filter($data); //过滤待签名数据
 		ksort($params);
 		$urlstring = $this->createQueryString($params);
-		$result = false;
-		if($signType == AliPay::SIGNTYPE_RSA2){
-			$result = (bool)openssl_verify($urlstring, base64_decode($sign), $this->alipayPublicKey, OPENSSL_ALGO_SHA256);
-		}elseif($signType == AliPay::SIGNTYPE_RSA){
-			$result = (bool)openssl_verify($urlstring, base64_decode($sign), $this->alipayPublicKey);
+		$result = $this->verifySync($urlstring,$sign,$signType);
+		return $result;
+	}
+
+	/**
+	 * 同步返回的验签不需要用数组处理
+	 */
+	public function verifySync($data, $sign, $signType = AliPay::SIGNTYPE_RSA2) {
+		if (AliPay::SIGNTYPE_RSA2 == $signType) {
+			$result = (bool)openssl_verify($data, base64_decode($sign), $this->alipayPublicKey, OPENSSL_ALGO_SHA256);
+		} else {
+			$result = (bool)openssl_verify($data, base64_decode($sign), $this->alipayPublicKey);
 		}
 		return $result;
 	}
